@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { RotateCcw, User, Bot } from "lucide-react";
+import { RotateCcw, User, Bot, History } from "lucide-react";
 import { api } from "@/trpc/react";
+import Link from "next/link";
 
 type Player = "player" | "ai" | null;
 type Board = Player[][];
@@ -35,7 +36,11 @@ function checkWin(
 		[1, -1], // diagonal \
 	];
 
-	for (const [dx, dy] of directions) {
+	for (const direction of directions) {
+		const dx = direction[0];
+		const dy = direction[1];
+		if (dx === undefined || dy === undefined) continue;
+
 		let count = 1;
 
 		// Check positive direction
@@ -87,8 +92,81 @@ export default function Connect4Game() {
 	const [currentPlayer, setCurrentPlayer] = useState<Player>("player");
 	const [gameStatus, setGameStatus] = useState<GameStatus>("playing");
 	const [isAiThinking, setIsAiThinking] = useState(false);
+	const [moveHistory, setMoveHistory] = useState<
+		Array<{
+			player: Player;
+			column: number;
+			row: number;
+			moveNumber: number;
+		}>
+	>([]);
+	const gameSavedRef = useRef(false);
 
 	const getAIMoveApi = api.connect4.getAIMove.useMutation();
+	const createGameSessionApi = api.connect4.createGameSession.useMutation();
+	const saveMovesBatchApi = api.connect4.saveMovesBatch.useMutation();
+	const endGameSessionApi = api.connect4.endGameSession.useMutation();
+	const utils = api.useUtils();
+
+	// Save the completed game to the database
+	const saveCompletedGame = useCallback(
+		async (finalStatus: GameStatus, moves: typeof moveHistory) => {
+			if (finalStatus === "playing" || moves.length === 0) return;
+
+			// Prevent saving the same game multiple times
+			if (gameSavedRef.current) return;
+			gameSavedRef.current = true;
+
+			try {
+				console.log("Saving completed game...");
+
+				// Create a new game session
+				const session = await createGameSessionApi.mutateAsync();
+
+				// Save all moves in batch - single server call
+				const validMoves = moves.filter((move) => move.player !== null);
+				if (validMoves.length > 0) {
+					await saveMovesBatchApi.mutateAsync({
+						gameId: session.id,
+						moves: validMoves.map((move) => ({
+							player: move.player as "player" | "ai",
+							column: move.column,
+							row: move.row,
+							moveNumber: move.moveNumber,
+						})),
+					});
+				}
+
+				// End the game session with the final status
+				await endGameSessionApi.mutateAsync({
+					gameId: session.id,
+					status: finalStatus,
+				});
+
+				// Invalidate game history query to show the new game
+				await utils.connect4.getGameHistory.invalidate();
+
+				console.log("Game saved successfully!");
+			} catch (error) {
+				console.error("Failed to save game:", error);
+				// Reset the flag if save failed so it can be retried
+				gameSavedRef.current = false;
+			}
+		},
+		[createGameSessionApi, saveMovesBatchApi, endGameSessionApi, utils],
+	);
+
+	// Effect to save game when it ends
+	useEffect(() => {
+		if (
+			gameStatus !== "playing" &&
+			!gameSavedRef.current &&
+			moveHistory.length > 0
+		) {
+			saveCompletedGame(gameStatus, moveHistory);
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [gameStatus]); // Only depend on gameStatus to avoid infinite loop
 
 	const makeAiMove = useCallback(
 		async (currentBoard: Board) => {
@@ -129,14 +207,28 @@ export default function Connect4Game() {
 
 						for (let row = ROWS - 1; row >= 0; row--) {
 							if (newBoard[row]?.[result.column] === null) {
-								newBoard[row]![result.column] = "ai";
+								const currentRow = newBoard[row];
+								if (currentRow) {
+									currentRow[result.column] = "ai";
 
-								if (checkWin(newBoard, row, result.column, "ai")) {
-									setGameStatus("ai-wins");
-								} else if (isBoardFull(newBoard)) {
-									setGameStatus("draw");
-								} else {
-									setCurrentPlayer("player");
+									// Track the AI move locally
+									setMoveHistory((prev) => [
+										...prev,
+										{
+											player: "ai",
+											column: result.column,
+											row: row,
+											moveNumber: prev.length,
+										},
+									]);
+
+									if (checkWin(newBoard, row, result.column, "ai")) {
+										setGameStatus("ai-wins");
+									} else if (isBoardFull(newBoard)) {
+										setGameStatus("draw");
+									} else {
+										setCurrentPlayer("player");
+									}
 								}
 
 								setIsAiThinking(false);
@@ -155,19 +247,80 @@ export default function Connect4Game() {
 					const aiCol =
 						validColumns[Math.floor(Math.random() * validColumns.length)];
 
+					if (aiCol !== undefined) {
+						setBoard((prevBoard) => {
+							const newBoard = prevBoard.map((row) => [...row]);
+
+							for (let row = ROWS - 1; row >= 0; row--) {
+								if (newBoard[row]?.[aiCol] === null) {
+									const currentRow = newBoard[row];
+									if (currentRow) {
+										currentRow[aiCol] = "ai";
+
+										// Track the AI move locally
+										setMoveHistory((prev) => [
+											...prev,
+											{
+												player: "ai",
+												column: aiCol,
+												row: row,
+												moveNumber: prev.length,
+											},
+										]);
+
+										if (checkWin(newBoard, row, aiCol, "ai")) {
+											setGameStatus("ai-wins");
+										} else if (isBoardFull(newBoard)) {
+											setGameStatus("draw");
+										} else {
+											setCurrentPlayer("player");
+										}
+									}
+
+									setIsAiThinking(false);
+									return newBoard;
+								}
+							}
+
+							setIsAiThinking(false);
+							return prevBoard;
+						});
+					}
+				}
+			} catch (error) {
+				console.error("Error getting AI move:", error);
+				// Fall back to random move on error
+				const aiCol =
+					validColumns[Math.floor(Math.random() * validColumns.length)];
+
+				if (aiCol !== undefined) {
 					setBoard((prevBoard) => {
 						const newBoard = prevBoard.map((row) => [...row]);
 
 						for (let row = ROWS - 1; row >= 0; row--) {
 							if (newBoard[row]?.[aiCol] === null) {
-								newBoard[row]![aiCol] = "ai";
+								const currentRow = newBoard[row];
+								if (currentRow) {
+									currentRow[aiCol] = "ai";
 
-								if (checkWin(newBoard, row, aiCol, "ai")) {
-									setGameStatus("ai-wins");
-								} else if (isBoardFull(newBoard)) {
-									setGameStatus("draw");
-								} else {
-									setCurrentPlayer("player");
+									// Track the AI move locally
+									setMoveHistory((prev) => [
+										...prev,
+										{
+											player: "ai",
+											column: aiCol,
+											row: row,
+											moveNumber: prev.length,
+										},
+									]);
+
+									if (checkWin(newBoard, row, aiCol, "ai")) {
+										setGameStatus("ai-wins");
+									} else if (isBoardFull(newBoard)) {
+										setGameStatus("draw");
+									} else {
+										setCurrentPlayer("player");
+									}
 								}
 
 								setIsAiThinking(false);
@@ -179,35 +332,6 @@ export default function Connect4Game() {
 						return prevBoard;
 					});
 				}
-			} catch (error) {
-				console.error("Error getting AI move:", error);
-				// Fall back to random move on error
-				const aiCol =
-					validColumns[Math.floor(Math.random() * validColumns.length)];
-
-				setBoard((prevBoard) => {
-					const newBoard = prevBoard.map((row) => [...row]);
-
-					for (let row = ROWS - 1; row >= 0; row--) {
-						if (newBoard[row]?.[aiCol] === null) {
-							newBoard[row]![aiCol] = "ai";
-
-							if (checkWin(newBoard, row, aiCol, "ai")) {
-								setGameStatus("ai-wins");
-							} else if (isBoardFull(newBoard)) {
-								setGameStatus("draw");
-							} else {
-								setCurrentPlayer("player");
-							}
-
-							setIsAiThinking(false);
-							return newBoard;
-						}
-					}
-
-					setIsAiThinking(false);
-					return prevBoard;
-				});
 			}
 		},
 		[getAIMoveApi],
@@ -241,22 +365,36 @@ export default function Connect4Game() {
 				// Find the lowest empty row in the column
 				for (let row = ROWS - 1; row >= 0; row--) {
 					if (newBoard[row]?.[col] === null) {
-						newBoard[row]![col] = "player";
+						const currentRow = newBoard[row];
+						if (currentRow) {
+							currentRow[col] = "player";
 
-						// Check for win
-						if (checkWin(newBoard, row, col, "player")) {
-							setGameStatus("player-wins");
-							return newBoard;
+							// Track the player move locally
+							setMoveHistory((prev) => [
+								...prev,
+								{
+									player: "player",
+									column: col,
+									row: row,
+									moveNumber: prev.length,
+								},
+							]);
+
+							// Check for win
+							if (checkWin(newBoard, row, col, "player")) {
+								setGameStatus("player-wins");
+								return newBoard;
+							}
+
+							// Check for draw
+							if (isBoardFull(newBoard)) {
+								setGameStatus("draw");
+								return newBoard;
+							}
+
+							// Switch to AI turn
+							setCurrentPlayer("ai");
 						}
-
-						// Check for draw
-						if (isBoardFull(newBoard)) {
-							setGameStatus("draw");
-							return newBoard;
-						}
-
-						// Switch to AI turn
-						setCurrentPlayer("ai");
 
 						return newBoard;
 					}
@@ -273,6 +411,8 @@ export default function Connect4Game() {
 		setCurrentPlayer("player");
 		setGameStatus("playing");
 		setIsAiThinking(false);
+		setMoveHistory([]);
+		gameSavedRef.current = false; // Reset the save flag for new game
 	};
 
 	const getStatusMessage = () => {
@@ -334,7 +474,7 @@ export default function Connect4Game() {
 								{Array.from({ length: COLS }, (_, col) => (
 									<button
 										type="button"
-										key={col}
+										key={`col-${col}`}
 										onClick={() => dropPiece(col)}
 										disabled={
 											gameStatus !== "playing" ||
@@ -352,7 +492,7 @@ export default function Connect4Game() {
 								{board.map((row, rowIndex) =>
 									row.map((cell, colIndex) => (
 										<div
-											key={`${rowIndex}-${colIndex}`}
+											key={`cell-${rowIndex}-${colIndex}`}
 											className="w-12 h-12 bg-white rounded-full border-2 border-blue-300 flex items-center justify-center shadow-inner"
 										>
 											{cell && (
@@ -371,7 +511,7 @@ export default function Connect4Game() {
 						</div>
 
 						{/* Game Controls */}
-						<div className="flex justify-center">
+						<div className="flex justify-center gap-4">
 							<Button
 								onClick={resetGame}
 								variant="outline"
@@ -380,6 +520,12 @@ export default function Connect4Game() {
 								<RotateCcw className="w-4 h-4" />
 								New Game
 							</Button>
+							<Link href="/history">
+								<Button variant="outline" className="flex items-center gap-2">
+									<History className="w-4 h-4" />
+									Game History
+								</Button>
+							</Link>
 						</div>
 
 						{/* Game Instructions */}

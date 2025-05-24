@@ -18,3 +18,30 @@ model Post {
 
     @@index([name])
 }
+
+model GameSession {
+    id        String   @id @default(cuid())
+    winner    String?  // "player", "ai", or null for draw
+    status    String   // "playing", "player-wins", "ai-wins", "draw"
+    createdAt DateTime @default(now())
+    endedAt   DateTime?
+    
+    moves     Move[]
+    
+    @@index([createdAt])
+}
+
+model Move {
+    id          String      @id @default(cuid())
+    gameId      String
+    moveNumber  Int
+    player      String      // "player" or "ai"
+    column      Int
+    row         Int
+    createdAt   DateTime    @default(now())
+    
+    game        GameSession @relation(fields: [gameId], references: [id], onDelete: Cascade)
+    
+    @@unique([gameId, moveNumber])
+    @@index([gameId])
+}

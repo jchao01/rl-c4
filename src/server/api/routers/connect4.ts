@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createTRPCRouter, publicProcedure } from "@/server/api/trpc";
+import { db } from "@/server/db";
 
 // Types
 type Player = 1 | 2;
@@ -145,5 +146,133 @@ Your turn as Player ${input.currentPlayer} (${input.currentPlayer === 1 ? 'X' : 
         column: null,
         error: 'AI failed to provide a valid move',
       };
+    }),
+    
+  // Create a new game session
+  createGameSession: publicProcedure
+    .mutation(async () => {
+      const session = await db.gameSession.create({
+        data: {
+          status: "playing",
+        },
+      });
+      
+      return session;
+    }),
+    
+  // Save a move
+  saveMove: publicProcedure
+    .input(z.object({
+      gameId: z.string(),
+      player: z.enum(["player", "ai"]),
+      column: z.number(),
+      row: z.number(),
+      moveNumber: z.number(),
+    }))
+    .mutation(async ({ input }) => {
+      const move = await db.move.create({
+        data: {
+          gameId: input.gameId,
+          player: input.player,
+          column: input.column,
+          row: input.row,
+          moveNumber: input.moveNumber,
+        },
+      });
+      
+      return move;
+    }),
+    
+  // Save multiple moves in batch
+  saveMovesBatch: publicProcedure
+    .input(z.object({
+      gameId: z.string(),
+      moves: z.array(z.object({
+        player: z.enum(["player", "ai"]),
+        column: z.number(),
+        row: z.number(),
+        moveNumber: z.number(),
+      })),
+    }))
+    .mutation(async ({ input }) => {
+      const moves = await db.move.createMany({
+        data: input.moves.map(move => ({
+          gameId: input.gameId,
+          player: move.player,
+          column: move.column,
+          row: move.row,
+          moveNumber: move.moveNumber,
+        })),
+      });
+      
+      return moves;
+    }),
+    
+  // End a game session
+  endGameSession: publicProcedure
+    .input(z.object({
+      gameId: z.string(),
+      status: z.enum(["player-wins", "ai-wins", "draw"]),
+    }))
+    .mutation(async ({ input }) => {
+      const winner = 
+        input.status === "player-wins" ? "player" :
+        input.status === "ai-wins" ? "ai" :
+        null;
+        
+      const session = await db.gameSession.update({
+        where: { id: input.gameId },
+        data: {
+          status: input.status,
+          winner,
+          endedAt: new Date(),
+        },
+      });
+      
+      return session;
+    }),
+    
+  // Get game history
+  getGameHistory: publicProcedure
+    .query(async () => {
+      const sessions = await db.gameSession.findMany({
+        where: {
+          status: {
+            not: "playing",
+          },
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+        include: {
+          moves: {
+            orderBy: {
+              moveNumber: "asc",
+            },
+          },
+        },
+      });
+      
+      return sessions;
+    }),
+    
+  // Get specific game session
+  getGameSession: publicProcedure
+    .input(z.object({
+      gameId: z.string(),
+    }))
+    .query(async ({ input }) => {
+      const session = await db.gameSession.findUnique({
+        where: { id: input.gameId },
+        include: {
+          moves: {
+            orderBy: {
+              moveNumber: "asc",
+            },
+          },
+        },
+      });
+      
+      return session;
     }),
 }); 
