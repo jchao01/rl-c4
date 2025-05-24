@@ -3,89 +3,21 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { RotateCcw, User, Bot, History } from "lucide-react";
+import { RotateCcw, History } from "lucide-react";
 import { api } from "@/trpc/react";
 import Link from "next/link";
-
-type Player = "player" | "ai" | null;
-type Board = Player[][];
-type GameStatus = "playing" | "player-wins" | "ai-wins" | "draw";
-
-const ROWS = 6;
-const COLS = 7;
-
-function createEmptyBoard(): Board {
-	return Array(ROWS)
-		.fill(null)
-		.map(() => Array(COLS).fill(null));
-}
-
-function checkWin(
-	board: Board,
-	row: number,
-	col: number,
-	player: Player,
-): boolean {
-	if (!player) return false;
-
-	const directions = [
-		[0, 1], // horizontal
-		[1, 0], // vertical
-		[1, 1], // diagonal /
-		[1, -1], // diagonal \
-	];
-
-	for (const direction of directions) {
-		const dx = direction[0];
-		const dy = direction[1];
-		if (dx === undefined || dy === undefined) continue;
-
-		let count = 1;
-
-		// Check positive direction
-		for (let i = 1; i < 4; i++) {
-			const newRow = row + dx * i;
-			const newCol = col + dy * i;
-			if (
-				newRow >= 0 &&
-				newRow < ROWS &&
-				newCol >= 0 &&
-				newCol < COLS &&
-				board[newRow]?.[newCol] === player
-			) {
-				count++;
-			} else {
-				break;
-			}
-		}
-
-		// Check negative direction
-		for (let i = 1; i < 4; i++) {
-			const newRow = row - dx * i;
-			const newCol = col - dy * i;
-			if (
-				newRow >= 0 &&
-				newRow < ROWS &&
-				newCol >= 0 &&
-				newCol < COLS &&
-				board[newRow]?.[newCol] === player
-			) {
-				count++;
-			} else {
-				break;
-			}
-		}
-
-		if (count >= 4) return true;
-	}
-
-	return false;
-}
-
-function isBoardFull(board: Board): boolean {
-	return board[0]?.every((cell) => cell !== null) ?? false;
-}
+import { GameBoard } from "@/components/GameBoard";
+import { GameHeader } from "@/components/GameHeader";
+import {
+	createEmptyBoard,
+	checkWin,
+	isBoardFull,
+	ROWS,
+	COLS,
+	type Player,
+	type Board,
+	type GameStatus,
+} from "@/lib/game-utils";
 
 export default function Connect4Game() {
 	const [board, setBoard] = useState<Board>(createEmptyBoard());
@@ -415,34 +347,8 @@ export default function Connect4Game() {
 		gameSavedRef.current = false; // Reset the save flag for new game
 	};
 
-	const getStatusMessage = () => {
-		switch (gameStatus) {
-			case "player-wins":
-				return "You win! 🎉";
-			case "ai-wins":
-				return "AI wins! 🤖";
-			case "draw":
-				return "It's a draw! 🤝";
-			case "playing":
-				if (isAiThinking) return "AI is thinking...";
-				return currentPlayer === "player" ? "Your turn" : "AI's turn";
-			default:
-				return "";
-		}
-	};
-
-	const getStatusColor = () => {
-		switch (gameStatus) {
-			case "player-wins":
-				return "bg-green-400";
-			case "ai-wins":
-				return "bg-red-500";
-			case "draw":
-				return "bg-yellow-500";
-			default:
-				return currentPlayer === "player" ? "bg-blue-500" : "bg-purple-500";
-		}
-	};
+	// Check which columns are full
+	const disabledColumns = board[0]?.map((cell) => cell !== null) ?? [];
 
 	return (
 		<div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 p-4">
@@ -452,63 +358,25 @@ export default function Connect4Game() {
 						<CardTitle className="text-3xl font-bold text-gray-800 mb-4">
 							Connect 4
 						</CardTitle>
-						<div className="flex items-center justify-between">
-							<div className="flex items-center gap-2">
-								<User className="w-5 h-5 text-blue-600" />
-								<span className="font-medium">You</span>
-							</div>
-							<Badge className={`${getStatusColor()} text-white px-4 py-2`}>
-								{getStatusMessage()}
-							</Badge>
-							<div className="flex items-center gap-2">
-								<Bot className="w-5 h-5 text-purple-600" />
-								<span className="font-medium">AI</span>
-							</div>
-						</div>
+						<GameHeader
+							gameStatus={gameStatus}
+							currentPlayer={currentPlayer}
+							isAiThinking={isAiThinking}
+						/>
 					</CardHeader>
 
 					<CardContent className="space-y-4">
 						{/* Game Board */}
-						<div className="bg-blue-600 p-4 rounded-lg shadow-inner">
-							<div className="grid grid-cols-7 gap-2">
-								{Array.from({ length: COLS }, (_, col) => (
-									<button
-										type="button"
-										key={`col-${col}`}
-										onClick={() => dropPiece(col)}
-										disabled={
-											gameStatus !== "playing" ||
-											currentPlayer !== "player" ||
-											isAiThinking ||
-											board[0]?.[col] !== null
-										}
-										className="h-8 bg-blue-500 hover:bg-blue-400 disabled:hover:bg-blue-500 rounded transition-colors duration-200 border-2 border-blue-400"
-										aria-label={`Drop piece in column ${col + 1}`}
-									/>
-								))}
-							</div>
-
-							<div className="grid grid-cols-7 gap-2 mt-2">
-								{board.map((row, rowIndex) =>
-									row.map((cell, colIndex) => (
-										<div
-											key={`cell-${rowIndex}-${colIndex}`}
-											className="w-12 h-12 bg-white rounded-full border-2 border-blue-300 flex items-center justify-center shadow-inner"
-										>
-											{cell && (
-												<div
-													className={`w-10 h-10 rounded-full shadow-lg ${
-														cell === "player"
-															? "bg-gradient-to-br from-red-600 to-red-800"
-															: "bg-gradient-to-br from-yellow-400 to-yellow-600"
-													}`}
-												/>
-											)}
-										</div>
-									)),
-								)}
-							</div>
-						</div>
+						<GameBoard
+							board={board}
+							onColumnClick={dropPiece}
+							isPlayable={
+								gameStatus === "playing" &&
+								currentPlayer === "player" &&
+								!isAiThinking
+							}
+							disabledColumns={disabledColumns}
+						/>
 
 						{/* Game Controls */}
 						<div className="flex justify-center gap-4">

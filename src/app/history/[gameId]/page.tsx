@@ -18,18 +18,14 @@ import {
 import { api } from "@/trpc/react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-
-type Player = "player" | "ai" | null;
-type Board = Player[][];
-
-const ROWS = 6;
-const COLS = 7;
-
-function createEmptyBoard(): Board {
-	return Array(ROWS)
-		.fill(null)
-		.map(() => Array(COLS).fill(null));
-}
+import { GameBoard } from "@/components/GameBoard";
+import {
+	createEmptyBoard,
+	ROWS,
+	COLS,
+	type Player,
+	type Board,
+} from "@/lib/game-utils";
 
 export default function GameReplayPage() {
 	const params = useParams();
@@ -192,28 +188,7 @@ export default function GameReplayPage() {
 
 					<CardContent className="space-y-4">
 						{/* Game Board */}
-						<div className="bg-blue-600 p-4 rounded-lg shadow-inner">
-							<div className="grid grid-cols-7 gap-2">
-								{board.map((row, rowIndex) =>
-									row.map((cell, colIndex) => (
-										<div
-											key={`cell-${rowIndex}-${colIndex}`}
-											className="w-12 h-12 bg-white rounded-full border-2 border-blue-300 flex items-center justify-center shadow-inner"
-										>
-											{cell && (
-												<div
-													className={`w-10 h-10 rounded-full shadow-lg ${
-														cell === "player"
-															? "bg-gradient-to-br from-red-600 to-red-800"
-															: "bg-gradient-to-br from-yellow-400 to-yellow-600"
-													}`}
-												/>
-											)}
-										</div>
-									)),
-								)}
-							</div>
-						</div>
+						<GameBoard board={board} />
 
 						{/* Replay Controls */}
 						<div className="flex items-center justify-center gap-2">
@@ -267,8 +242,9 @@ export default function GameReplayPage() {
 						<div className="mt-6">
 							<h3 className="font-semibold mb-2">Move History</h3>
 							<div className="max-h-40 overflow-y-auto border rounded-lg p-2">
-								{gameSession.moves.map((move, index) => (
+								{gameSession.moves.map((move: any, index: number) => (
 									<button
+										type="button"
 										key={move.id}
 										onClick={() => setCurrentMoveIndex(index)}
 										className={`block w-full text-left px-2 py-1 rounded hover:bg-gray-100 ${

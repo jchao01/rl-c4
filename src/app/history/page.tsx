@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -8,32 +7,11 @@ import { ArrowLeft, Play, Calendar, Trophy } from "lucide-react";
 import { api } from "@/trpc/react";
 import Link from "next/link";
 import { format } from "date-fns";
+import { getWinnerDisplay, getWinnerColor } from "@/lib/game-utils";
 
 export default function GameHistoryPage() {
 	const { data: gameHistory, isLoading } =
 		api.connect4.getGameHistory.useQuery();
-
-	const getWinnerDisplay = (winner: string | null, status: string) => {
-		if (status === "draw") return "Draw";
-		if (winner === "player") return "You Won! 🎉";
-		if (winner === "ai") return "AI Won 🤖";
-		return "Unknown";
-	};
-
-	const getWinnerColor = (winner: string | null, status: string) => {
-		if (status === "draw") return "bg-yellow-500";
-		if (winner === "player") return "bg-green-500";
-		if (winner === "ai") return "bg-red-500";
-		return "bg-gray-500";
-	};
-
-	const getDuration = (startTime: Date, endTime: Date | null) => {
-		if (!endTime) return "N/A";
-		const durationMs = endTime.getTime() - startTime.getTime();
-		const minutes = Math.floor(durationMs / 60000);
-		const seconds = Math.floor((durationMs % 60000) / 1000);
-		return `${minutes}:${seconds.toString().padStart(2, "0")}`;
-	};
 
 	if (isLoading) {
 		return (
@@ -91,21 +69,12 @@ export default function GameHistoryPage() {
 																{game.moves.length} moves
 															</span>
 														</div>
-														<div className="flex items-center gap-4 text-sm text-gray-600">
-															<div className="flex items-center gap-1">
-																<Calendar className="w-4 h-4" />
-																{format(
-																	new Date(game.createdAt),
-																	"MMM d, yyyy h:mm a",
-																)}
-															</div>
-															<div>
-																Duration:{" "}
-																{getDuration(
-																	new Date(game.createdAt),
-																	game.endedAt ? new Date(game.endedAt) : null,
-																)}
-															</div>
+														<div className="flex items-center gap-1 text-sm text-gray-600">
+															<Calendar className="w-4 h-4" />
+															{format(
+																new Date(game.createdAt),
+																"MMM d, yyyy h:mm a",
+															)}
 														</div>
 													</div>
 												</div>
